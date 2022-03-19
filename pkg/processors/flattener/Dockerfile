@@ -25,7 +25,7 @@ RUN go build -o ./bin/flattener ./main.go
 RUN chmod +x ./bin/flattener
 
 # use a minimal alpine image
-FROM alpine:3.7
+FROM alpine:3.14
 # add ca-certificates in case you need them
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 # set working directory
