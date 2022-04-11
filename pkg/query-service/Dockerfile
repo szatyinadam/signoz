@@ -25,7 +25,7 @@ RUN go build -a -ldflags "-linkmode external -extldflags '-static' -s -w" -o ./b
 RUN chmod +x ./bin/query-service
 
 # use a minimal alpine image
-FROM alpine:3.7
+FROM alpine:3.14.6
 # add ca-certificates in case you need them
 RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
 # set working directory
