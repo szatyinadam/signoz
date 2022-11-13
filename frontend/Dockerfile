@@ -20,7 +20,7 @@ COPY . .
 # Build the project and copy the files
 RUN yarn build
 
-FROM nginx:1.18-alpine
+FROM nginx:mainline-alpine
 
 #!/bin/sh
 
