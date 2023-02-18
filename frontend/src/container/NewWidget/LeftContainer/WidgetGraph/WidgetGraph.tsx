@@ -4,13 +4,16 @@ import { NewWidgetProps } from 'container/NewWidget';
 import getChartData from 'lib/getChartData';
 import React from 'react';
 import { useSelector } from 'react-redux';
-import { useLocation } from 'react-router';
+import { useLocation } from 'react-router-dom';
 import { AppState } from 'store/reducers';
 import DashboardReducer from 'types/reducer/dashboards';
 
 import { NotFoundContainer } from './styles';
 
-const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
+function WidgetGraph({
+	selectedGraph,
+	yAxisUnit,
+}: WidgetGraphProps): JSX.Element {
 	const { dashboards } = useSelector<AppState, DashboardReducer>(
 		(state) => state.dashboards,
 	);
@@ -31,7 +34,14 @@ const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
 
 	const { queryData, title, opacity, isStacked } = selectedWidget;
 
-	if (queryData.data.length === 0) {
+	if (queryData.error) {
+		return (
+			<NotFoundContainer>
+				<Typography>{queryData.errorMessage}</Typography>
+			</NotFoundContainer>
+		);
+	}
+	if (queryData.data.queryData.length === 0) {
 		return (
 			<NotFoundContainer>
 				<Typography>No Data</Typography>
@@ -40,7 +50,7 @@ const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
 	}
 
 	const chartDataSet = getChartData({
-		queryData,
+		queryData: [queryData.data],
 	});
 
 	return (
@@ -50,9 +60,11 @@ const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
 			opacity={opacity}
 			data={chartDataSet}
 			GRAPH_TYPES={selectedGraph}
+			name={widgetId || 'legend_widget'}
+			yAxisUnit={yAxisUnit}
 		/>
 	);
-};
+}
 
 type WidgetGraphProps = NewWidgetProps;
 

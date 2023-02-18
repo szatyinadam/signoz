@@ -1,8 +1,22 @@
+import { themeColors } from 'constants/theme';
 import styled from 'styled-components';
 
 export const LegendsContainer = styled.div`
-	display: flex;
-	overflow-y: scroll;
-	margin-right: 1rem;
-	margin-bottom: 1rem;
+	height: 10%;
+
+	* {
+		::-webkit-scrollbar {
+			width: 0.5rem;
+		}
+		::-webkit-scrollbar-track {
+			background: transparent;
+		}
+		::-webkit-scrollbar-thumb {
+			background: ${themeColors.royalGrey};
+			border-radius: 0.625rem;
+		}
+		::-webkit-scrollbar-thumb:hover {
+			background: ${themeColors.matterhornGrey};
+		}
+	}
 `;

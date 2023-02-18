@@ -1,44 +1,65 @@
 package app
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
+	_ "net/http/pprof" // http profiler
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
-	"github.com/posthog/posthog-go"
+	"github.com/jmoiron/sqlx"
+
 	"github.com/rs/cors"
 	"github.com/soheilhy/cmux"
-	"go.signoz.io/query-service/app/clickhouseReader"
-	"go.signoz.io/query-service/app/druidReader"
-	"go.signoz.io/query-service/healthcheck"
-	"go.signoz.io/query-service/utils"
+	"go.signoz.io/signoz/pkg/query-service/app/clickhouseReader"
+	"go.signoz.io/signoz/pkg/query-service/app/dashboards"
+	"go.signoz.io/signoz/pkg/query-service/constants"
+	"go.signoz.io/signoz/pkg/query-service/dao"
+	"go.signoz.io/signoz/pkg/query-service/featureManager"
+	"go.signoz.io/signoz/pkg/query-service/healthcheck"
+	am "go.signoz.io/signoz/pkg/query-service/integrations/alertManager"
+	"go.signoz.io/signoz/pkg/query-service/interfaces"
+	"go.signoz.io/signoz/pkg/query-service/model"
+	pqle "go.signoz.io/signoz/pkg/query-service/pqlEngine"
+	"go.signoz.io/signoz/pkg/query-service/rules"
+	"go.signoz.io/signoz/pkg/query-service/telemetry"
+	"go.signoz.io/signoz/pkg/query-service/utils"
 	"go.uber.org/zap"
 )
 
 type ServerOptions struct {
-	HTTPHostPort string
-	// DruidClientUrl string
+	PromConfigPath  string
+	HTTPHostPort    string
+	PrivateHostPort string
+	// alert specific params
+	DisableRules bool
+	RuleRepoURL  string
 }
 
 // Server runs HTTP, Mux and a grpc server
 type Server struct {
 	// logger       *zap.Logger
-	// querySvc     *querysvc.QueryService
-	// queryOptions *QueryOptions
-
 	// tracer opentracing.Tracer // TODO make part of flags.Service
 	serverOptions *ServerOptions
 	conn          net.Listener
-	// grpcConn           net.Listener
-	httpConn net.Listener
-	// grpcServer         *grpc.Server
-	httpServer         *http.Server
-	separatePorts      bool
+	ruleManager   *rules.Manager
+	separatePorts bool
+
+	// public http router
+	httpConn   net.Listener
+	httpServer *http.Server
+
+	// private http
+	privateConn net.Listener
+	privateHTTP *http.Server
+
 	unavailableChannel chan healthcheck.Status
 }
 
@@ -48,84 +69,124 @@ func (s Server) HealthCheckStatus() chan healthcheck.Status {
 }
 
 // NewServer creates and initializes Server
-// func NewServer(logger *zap.Logger, querySvc *querysvc.QueryService, options *QueryOptions, tracer opentracing.Tracer) (*Server, error) {
 func NewServer(serverOptions *ServerOptions) (*Server, error) {
 
-	// _, httpPort, err := net.SplitHostPort(serverOptions.HTTPHostPort)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	if err := dao.InitDao("sqlite", constants.RELATIONAL_DATASOURCE_PATH); err != nil {
+		return nil, err
+	}
 
-	// _, grpcPort, err := net.SplitHostPort(options.GRPCHostPort)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
-	// grpcServer, err := createGRPCServer(querySvc, options, logger, tracer)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	httpServer, err := createHTTPServer()
+	localDB, err := dashboards.InitDB(constants.RELATIONAL_DATASOURCE_PATH)
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &Server{
-		// logger: logger,
-		// querySvc:           querySvc,
-		// queryOptions:       options,
-		// tracer:             tracer,
-		// grpcServer:         grpcServer,
-		serverOptions: serverOptions,
-		httpServer:    httpServer,
-		separatePorts: true,
-		// separatePorts:      grpcPort != httpPort,
-		unavailableChannel: make(chan healthcheck.Status),
-	}, nil
-}
+	localDB.SetMaxOpenConns(10)
 
-var posthogClient posthog.Client
-var distinctId string
+	// initiate feature manager
+	fm := featureManager.StartManager()
 
-func createHTTPServer() (*http.Server, error) {
+	readerReady := make(chan bool)
 
-	posthogClient = posthog.New("H-htDCae7CR3RV57gUzmol6IAKtm5IMCvbcm_fwnL-w")
-	distinctId = uuid.New().String()
-
-	var reader Reader
-
+	var reader interfaces.Reader
 	storage := os.Getenv("STORAGE")
-	if storage == "druid" {
-		zap.S().Info("Using Apache Druid as datastore ...")
-		reader = druidReader.NewReader()
-	} else if storage == "clickhouse" {
+	if storage == "clickhouse" {
 		zap.S().Info("Using ClickHouse as datastore ...")
-		reader = clickhouseReader.NewReader()
+		clickhouseReader := clickhouseReader.NewReader(localDB, serverOptions.PromConfigPath, fm)
+		go clickhouseReader.Start(readerReady)
+		reader = clickhouseReader
 	} else {
 		return nil, fmt.Errorf("Storage type: %s is not supported in query service", storage)
 	}
 
-	apiHandler, err := NewAPIHandler(&reader, &posthogClient, distinctId)
+	<-readerReady
+	rm, err := makeRulesManager(serverOptions.PromConfigPath, constants.GetAlertManagerApiPrefix(), serverOptions.RuleRepoURL, localDB, reader, serverOptions.DisableRules)
 	if err != nil {
 		return nil, err
 	}
 
+	telemetry.GetInstance().SetReader(reader)
+	apiHandler, err := NewAPIHandler(APIHandlerOpts{
+		Reader:       reader,
+		AppDao:       dao.DB(),
+		RuleManager:  rm,
+		FeatureFlags: fm,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	s := &Server{
+		// logger: logger,
+		// tracer: tracer,
+		ruleManager:        rm,
+		serverOptions:      serverOptions,
+		unavailableChannel: make(chan healthcheck.Status),
+	}
+
+	httpServer, err := s.createPublicServer(apiHandler)
+
+	if err != nil {
+		return nil, err
+	}
+
+	s.httpServer = httpServer
+
+	privateServer, err := s.createPrivateServer(apiHandler)
+	if err != nil {
+		return nil, err
+	}
+
+	s.privateHTTP = privateServer
+
+	return s, nil
+}
+
+func (s *Server) createPrivateServer(api *APIHandler) (*http.Server, error) {
+
 	r := NewRouter()
 
-	r.Use(analyticsMiddleware)
-	r.Use(loggingMiddleware)
+	r.Use(setTimeoutMiddleware)
+	r.Use(s.analyticsMiddleware)
+	r.Use(loggingMiddlewarePrivate)
 
-	apiHandler.RegisterRoutes(r)
+	api.RegisterPrivateRoutes(r)
 
 	c := cors.New(cors.Options{
+		//todo(amol): find out a way to add exact domain or
+		// ip here for alert manager
 		AllowedOrigins: []string{"*"},
-		// AllowCredentials: true,
-		AllowedMethods: []string{"GET", "DELETE", "POST", "PUT"},
+		AllowedMethods: []string{"GET", "DELETE", "POST", "PUT", "PATCH"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type"},
 	})
 
 	handler := c.Handler(r)
-	// var handler http.Handler = r
+	handler = handlers.CompressHandler(handler)
+
+	return &http.Server{
+		Handler: handler,
+	}, nil
+}
+
+func (s *Server) createPublicServer(api *APIHandler) (*http.Server, error) {
+
+	r := NewRouter()
+
+	r.Use(setTimeoutMiddleware)
+	r.Use(s.analyticsMiddleware)
+	r.Use(loggingMiddleware)
+
+	api.RegisterRoutes(r)
+	api.RegisterMetricsRoutes(r)
+	api.RegisterLogsRoutes(r)
+
+	c := cors.New(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "DELETE", "POST", "PUT", "PATCH", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "cache-control"},
+	})
+
+	handler := c.Handler(r)
 
 	handler = handlers.CompressHandler(handler)
 
@@ -134,6 +195,7 @@ func createHTTPServer() (*http.Server, error) {
 	}, nil
 }
 
+// loggingMiddleware is used for logging public api calls
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := mux.CurrentRoute(r)
@@ -144,75 +206,183 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func analyticsMiddleware(next http.Handler) http.Handler {
+// loggingMiddlewarePrivate is used for logging private api calls
+// from internal services like alert manager
+func loggingMiddlewarePrivate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		route := mux.CurrentRoute(r)
+		path, _ := route.GetPathTemplate()
+		startTime := time.Now()
+		next.ServeHTTP(w, r)
+		zap.S().Info(path, "\tprivatePort: true", "\ttimeTaken: ", time.Now().Sub(startTime))
+	})
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func NewLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	// WriteHeader(int) is not called if our response implicitly returns 200 OK, so
+	// we default to that status code.
+	return &loggingResponseWriter{w, http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// Flush implements the http.Flush interface.
+func (lrw *loggingResponseWriter) Flush() {
+	lrw.ResponseWriter.(http.Flusher).Flush()
+}
+func extractDashboardMetaData(path string, r *http.Request) (map[string]interface{}, bool) {
+	pathToExtractBodyFrom := "/api/v2/metrics/query_range"
+
+	data := map[string]interface{}{}
+	var postData *model.QueryRangeParamsV2
+
+	if path == pathToExtractBodyFrom && (r.Method == "POST") {
+		if r.Body != nil {
+			bodyBytes, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				return nil, false
+			}
+			r.Body.Close() //  must close
+			r.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+			json.Unmarshal(bodyBytes, &postData)
+
+		} else {
+			return nil, false
+		}
+
+	} else {
+		return nil, false
+	}
+
+	signozMetricNotFound := false
+
+	if postData != nil {
+		signozMetricNotFound = telemetry.GetInstance().CheckSigNozMetricsV2(postData.CompositeMetricQuery)
+
+		if postData.CompositeMetricQuery != nil {
+			data["queryType"] = postData.CompositeMetricQuery.QueryType
+			data["panelType"] = postData.CompositeMetricQuery.PanelType
+		}
+
+		data["datasource"] = postData.DataSource
+	}
+
+	if signozMetricNotFound {
+		telemetry.GetInstance().AddActiveMetricsUser()
+		telemetry.GetInstance().SendEvent(telemetry.TELEMETRY_EVENT_DASHBOARDS_METADATA, data, true)
+	}
+
+	return data, true
+}
+
+func getActiveLogs(path string, r *http.Request) {
+	// if path == "/api/v1/dashboards/{uuid}" {
+	// 	telemetry.GetInstance().AddActiveMetricsUser()
+	// }
+	if path == "/api/v1/logs" {
+		hasFilters := len(r.URL.Query().Get("q"))
+		if hasFilters > 0 {
+			telemetry.GetInstance().AddActiveLogsUser()
+		}
+
+	}
+
+}
+
+func (s *Server) analyticsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route := mux.CurrentRoute(r)
 		path, _ := route.GetPathTemplate()
 
-		posthogClient.Enqueue(posthog.Capture{
-			DistinctId: distinctId,
-			Event:      path,
-		})
+		dashboardMetadata, metadataExists := extractDashboardMetaData(path, r)
+		getActiveLogs(path, r)
 
+		lrw := NewLoggingResponseWriter(w)
+		next.ServeHTTP(lrw, r)
+
+		data := map[string]interface{}{"path": path, "statusCode": lrw.statusCode}
+		if metadataExists {
+			for key, value := range dashboardMetadata {
+				data[key] = value
+			}
+		}
+
+		// if telemetry.GetInstance().IsSampled() {
+		if _, ok := telemetry.IgnoredPaths()[path]; !ok {
+			telemetry.GetInstance().SendEvent(telemetry.TELEMETRY_EVENT_PATH, data)
+		}
+		// }
+
+	})
+}
+
+func setTimeoutMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		var cancel context.CancelFunc
+		// check if route is not excluded
+		url := r.URL.Path
+		if _, ok := constants.TimeoutExcludedRoutes[url]; !ok {
+			ctx, cancel = context.WithTimeout(r.Context(), constants.ContextTimeout*time.Second)
+			defer cancel()
+		}
+
+		r = r.WithContext(ctx)
 		next.ServeHTTP(w, r)
 	})
 }
 
-// initListener initialises listeners of the server
-func (s *Server) initListener() (cmux.CMux, error) {
-	if s.separatePorts { // use separate ports and listeners each for gRPC and HTTP requests
-		var err error
-		// s.grpcConn, err = net.Listen("tcp", s.queryOptions.GRPCHostPort)
-		// if err != nil {
-		// 	return nil, err
-		// }
-
-		s.httpConn, err = net.Listen("tcp", s.serverOptions.HTTPHostPort)
-		if err != nil {
-			return nil, err
-		}
-		zap.S().Info("Query server started ...")
-		return nil, nil
+// initListeners initialises listeners of the server
+func (s *Server) initListeners() error {
+	// listen on public port
+	var err error
+	publicHostPort := s.serverOptions.HTTPHostPort
+	if publicHostPort == "" {
+		return fmt.Errorf("constants.HTTPHostPort is required")
 	}
 
-	// //  old behavior using cmux
-	// conn, err := net.Listen("tcp", s.queryOptions.HostPort)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// s.conn = conn
+	s.httpConn, err = net.Listen("tcp", publicHostPort)
+	if err != nil {
+		return err
+	}
 
-	// var tcpPort int
-	// if port, err := netutils
+	zap.S().Info(fmt.Sprintf("Query server started listening on %s...", s.serverOptions.HTTPHostPort))
 
-	// utils.GetPort(s.conn.Addr()); err == nil {
-	// 	tcpPort = port
-	// }
+	// listen on private port to support internal services
+	privateHostPort := s.serverOptions.PrivateHostPort
 
-	// zap.S().Info(
-	// 	"Query server started",
-	// 	zap.Int("port", tcpPort),
-	// 	zap.String("addr", s.queryOptions.HostPort))
+	if privateHostPort == "" {
+		return fmt.Errorf("constants.PrivateHostPort is required")
+	}
 
-	// // cmux server acts as a reverse-proxy between HTTP and GRPC backends.
-	// cmuxServer := cmux.New(s.conn)
+	s.privateConn, err = net.Listen("tcp", privateHostPort)
+	if err != nil {
+		return err
+	}
+	zap.S().Info(fmt.Sprintf("Query server started listening on private port %s...", s.serverOptions.PrivateHostPort))
 
-	// s.grpcConn = cmuxServer.MatchWithWriters(
-	// 	cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"),
-	// 	cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc+proto"),
-	// )
-	// s.httpConn = cmuxServer.Match(cmux.Any())
-	// s.queryOptions.HTTPHostPort = s.queryOptions.HostPort
-	// s.queryOptions.GRPCHostPort = s.queryOptions.HostPort
-
-	return nil, nil
-
+	return nil
 }
 
-// Start http, GRPC and cmux servers concurrently
+// Start listening on http and private http port concurrently
 func (s *Server) Start() error {
 
-	_, err := s.initListener()
+	// initiate rule manager first
+	if !s.serverOptions.DisableRules {
+		s.ruleManager.Start()
+	} else {
+		zap.S().Info("msg: Rules disabled as rules.disable is set to TRUE")
+	}
+
+	err := s.initListeners()
 	if err != nil {
 		return err
 	}
@@ -232,8 +402,82 @@ func (s *Server) Start() error {
 			zap.S().Error("Could not start HTTP server", zap.Error(err))
 		}
 		s.unavailableChannel <- healthcheck.Unavailable
+	}()
+
+	go func() {
+		zap.S().Info("Starting pprof server", zap.String("addr", constants.DebugHttpPort))
+
+		err = http.ListenAndServe(constants.DebugHttpPort, nil)
+		if err != nil {
+			zap.S().Error("Could not start pprof server", zap.Error(err))
+		}
+	}()
+
+	var privatePort int
+	if port, err := utils.GetPort(s.privateConn.Addr()); err == nil {
+		privatePort = port
+	}
+	fmt.Println("starting private http")
+	go func() {
+		zap.S().Info("Starting Private HTTP server", zap.Int("port", privatePort), zap.String("addr", s.serverOptions.PrivateHostPort))
+
+		switch err := s.privateHTTP.Serve(s.privateConn); err {
+		case nil, http.ErrServerClosed, cmux.ErrListenerClosed:
+			// normal exit, nothing to do
+			zap.S().Info("private http server closed")
+		default:
+			zap.S().Error("Could not start private HTTP server", zap.Error(err))
+		}
+
+		s.unavailableChannel <- healthcheck.Unavailable
 
 	}()
 
 	return nil
+}
+
+func makeRulesManager(
+	promConfigPath,
+	alertManagerURL string,
+	ruleRepoURL string,
+	db *sqlx.DB,
+	ch interfaces.Reader,
+	disableRules bool) (*rules.Manager, error) {
+
+	// create engine
+	pqle, err := pqle.FromReader(ch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pql engine : %v", err)
+	}
+
+	// notifier opts
+	notifierOpts := am.NotifierOptions{
+		QueueCapacity:    10000,
+		Timeout:          1 * time.Second,
+		AlertManagerURLs: []string{alertManagerURL},
+	}
+
+	// create manager opts
+	managerOpts := &rules.ManagerOptions{
+		NotifierOpts: notifierOpts,
+		Queriers: &rules.Queriers{
+			PqlEngine: pqle,
+			Ch:        ch.GetConn(),
+		},
+		RepoURL:      ruleRepoURL,
+		DBConn:       db,
+		Context:      context.Background(),
+		Logger:       nil,
+		DisableRules: disableRules,
+	}
+
+	// create Manager
+	manager, err := rules.NewManager(managerOpts)
+	if err != nil {
+		return nil, fmt.Errorf("rule manager error: %v", err)
+	}
+
+	zap.S().Info("rules manager is ready")
+
+	return manager, nil
 }

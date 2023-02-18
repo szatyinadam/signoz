@@ -4,13 +4,13 @@ import { Widgets } from 'types/api/dashboard/getAll';
 
 export const ApplySettingsToPanel = (
 	props: ApplySettingsToPanelProps,
-): ((dispatch: Dispatch<AppActions>) => void) => {
-	return (dispatch: Dispatch<AppActions>): void => {
-		dispatch({
-			type: 'APPLY_SETTINGS_TO_PANEL',
-			payload: props,
-		});
-	};
+): ((dispatch: Dispatch<AppActions>) => void) => (
+	dispatch: Dispatch<AppActions>,
+): void => {
+	dispatch({
+		type: 'APPLY_SETTINGS_TO_PANEL',
+		payload: props,
+	});
 };
 
 export interface ApplySettingsToPanelProps {
@@ -21,4 +21,5 @@ export interface ApplySettingsToPanelProps {
 	timePreferance: Widgets['timePreferance'];
 	nullZeroValues: Widgets['nullZeroValues'];
 	widgetId: Widgets['id'];
+	yAxisUnit: Widgets['yAxisUnit'];
 }

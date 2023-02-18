@@ -2,23 +2,22 @@ import { combineReducers } from 'redux';
 
 import appReducer from './app';
 import dashboardReducer from './dashboard';
-import { updateGlobalTimeReducer } from './global';
-import { metricsReducer } from './metrics';
+import globalTimeReducer from './global';
+import { LogsReducer } from './logs';
+import metricsReducers from './metric';
 import { ServiceMapReducer } from './serviceMap';
-import TraceFilterReducer from './traceFilters';
-import { traceItemReducer, tracesReducer } from './traces';
+import traceReducer from './trace';
 import { usageDataReducer } from './usage';
 
 const reducers = combineReducers({
-	traceFilters: TraceFilterReducer,
-	traces: tracesReducer,
-	traceItem: traceItemReducer,
+	traces: traceReducer,
 	usageDate: usageDataReducer,
-	globalTime: updateGlobalTimeReducer,
-	metricsData: metricsReducer,
+	globalTime: globalTimeReducer,
 	serviceMap: ServiceMapReducer,
 	dashboards: dashboardReducer,
 	app: appReducer,
+	metrics: metricsReducers,
+	logs: LogsReducer,
 });
 
 export type AppState = ReturnType<typeof reducers>;

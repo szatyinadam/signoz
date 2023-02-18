@@ -4,9 +4,13 @@ export type Success = 200;
 
 export type Forbidden = 403;
 
+export type BadRequest = 400;
+
 export type Unauthorized = 401;
 
 export type NotFound = 404;
+
+export type Conflict = 409;
 
 export type ServerError = 500;
 
@@ -17,6 +21,8 @@ export type ErrorStatusCode =
 	| Forbidden
 	| Unauthorized
 	| NotFound
-	| ServerError;
+	| ServerError
+	| BadRequest
+	| Conflict;
 
 export type StatusCode = SuccessStatusCode | ErrorStatusCode;

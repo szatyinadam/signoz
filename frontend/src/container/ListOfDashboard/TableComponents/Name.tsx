@@ -1,23 +1,23 @@
-import { Button } from 'antd';
 import ROUTES from 'constants/routes';
-import updateUrl from 'lib/updateUrl';
-import React, { useCallback } from 'react';
-import { useHistory } from 'react-router-dom';
+import history from 'lib/history';
+import React from 'react';
+import { generatePath } from 'react-router-dom';
 
 import { Data } from '..';
+import { TableLinkText } from './styles';
 
-const Name = (name: Data['name'], data: Data): JSX.Element => {
-	const { push } = useHistory();
+function Name(name: Data['name'], data: Data): JSX.Element {
+	const onClickHandler = (): void => {
+		const { id: DashboardId } = data;
 
-	const onClickHandler = useCallback(() => {
-		push(updateUrl(ROUTES.DASHBOARD, ':dashboardId', data.id));
-	}, []);
+		history.push(
+			generatePath(ROUTES.DASHBOARD, {
+				dashboardId: DashboardId,
+			}),
+		);
+	};
 
-	return (
-		<Button onClick={onClickHandler} type="link">
-			{name}
-		</Button>
-	);
-};
+	return <TableLinkText onClick={onClickHandler}>{name}</TableLinkText>;
+}
 
 export default Name;

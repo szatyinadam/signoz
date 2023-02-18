@@ -3,10 +3,10 @@ import Spinner from 'components/Spinner';
 import ROUTES from 'constants/routes';
 import { GRAPH_TYPES } from 'container/NewDashboard/ComponentsSlider';
 import NewWidget from 'container/NewWidget';
-import updateUrl from 'lib/updateUrl';
+import history from 'lib/history';
 import React, { useEffect, useRef, useState } from 'react';
 import { connect, useSelector } from 'react-redux';
-import { useHistory, useLocation, useParams } from 'react-router-dom';
+import { generatePath, useLocation, useParams } from 'react-router-dom';
 import { bindActionCreators, Dispatch } from 'redux';
 import { ThunkDispatch } from 'redux-thunk';
 import { GetDashboard, GetDashboardProps } from 'store/actions';
@@ -14,11 +14,10 @@ import { AppState } from 'store/reducers';
 import AppActions from 'types/actions';
 import DashboardReducer from 'types/reducer/dashboards';
 
-const DashboardWidget = ({ getDashboard }: NewDashboardProps): JSX.Element => {
+function DashboardWidget({ getDashboard }: NewDashboardProps): JSX.Element {
 	const { search } = useLocation();
 	const { dashboardId } = useParams<DashboardWidgetPageParams>();
 
-	const { push } = useHistory();
 	const [selectedGraph, setSelectedGraph] = useState<GRAPH_TYPES>();
 	const { loading, dashboards, error, errorMessage } = useSelector<
 		AppState,
@@ -38,11 +37,11 @@ const DashboardWidget = ({ getDashboard }: NewDashboardProps): JSX.Element => {
 		const graphType = params.get('graphType') as GRAPH_TYPES | null;
 
 		if (graphType === null) {
-			push(updateUrl(ROUTES.DASHBOARD, ':dashboardId', dashboardId));
+			history.push(generatePath(ROUTES.DASHBOARD, { dashboardId }));
 		} else {
 			setSelectedGraph(graphType);
 		}
-	}, [dashboardId, push, search]);
+	}, [dashboardId, search]);
 
 	const counter = useRef(0);
 
@@ -75,8 +74,13 @@ const DashboardWidget = ({ getDashboard }: NewDashboardProps): JSX.Element => {
 		);
 	}
 
-	return <NewWidget selectedGraph={selectedGraph} />;
-};
+	return (
+		<NewWidget
+			yAxisUnit={selectedWidget.yAxisUnit}
+			selectedGraph={selectedGraph}
+		/>
+	);
+}
 
 export interface DashboardWidgetPageParams {
 	dashboardId: string;

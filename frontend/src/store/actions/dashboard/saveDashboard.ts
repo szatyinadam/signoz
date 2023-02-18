@@ -2,11 +2,13 @@ import updateDashboardApi from 'api/dashboard/update';
 import { AxiosError } from 'axios';
 import ROUTES from 'constants/routes';
 import history from 'lib/history';
-import updateUrl from 'lib/updateUrl';
+import { Layout } from 'react-grid-layout';
+import { generatePath } from 'react-router-dom';
 import { Dispatch } from 'redux';
 import store from 'store';
 import AppActions from 'types/actions';
 import { Dashboard, Widgets } from 'types/api/dashboard/getAll';
+import { v4 } from 'uuid';
 
 export const SaveDashboard = ({
 	uuid,
@@ -18,10 +20,13 @@ export const SaveDashboard = ({
 	title,
 	widgetId,
 	dashboardId,
-}: SaveDashboardProps): ((dispatch: Dispatch<AppActions>) => void) => {
-	return async (dispatch: Dispatch<AppActions>): Promise<void> => {
+	yAxisUnit,
+}: SaveDashboardProps): ((dispatch: Dispatch<AppActions>) => void) =>
+	// eslint-disable-next-line sonarjs/cognitive-complexity
+	async (dispatch: Dispatch<AppActions>): Promise<void> => {
 		try {
 			const dashboard = store.getState();
+			const search = new URLSearchParams(history.location.search);
 
 			const selectedDashboard = dashboard.dashboards.dashboards.find(
 				(e) => e.uuid === uuid,
@@ -31,7 +36,7 @@ export const SaveDashboard = ({
 				throw new Error('Dashboard Not Found');
 			}
 
-			const data = selectedDashboard.data;
+			const { data } = selectedDashboard;
 
 			const updatedTitle = title;
 			const updatedDescription = description;
@@ -39,43 +44,76 @@ export const SaveDashboard = ({
 			const updatednullZeroValues = nullZeroValues;
 			const updatedopacity = opacity;
 			const updatedtimePreferance = timePreferance;
+			const updatedYAxisUnit = yAxisUnit;
 
 			const selectedWidgetIndex = data.widgets?.findIndex(
 				(e) => e.id === widgetId,
 			);
 
+			const isEmptyWidget = widgetId === 'empty';
+
+			const emptyLayoutIndex = data.layout?.findIndex((e) => e.i === 'empty');
+
+			const newWidgetId = v4();
+
 			const preWidget = data.widgets?.slice(0, selectedWidgetIndex) || [];
+
 			const afterWidget =
 				data.widgets?.slice(
 					(selectedWidgetIndex || 0) + 1, // this is never undefined
 					data.widgets?.length,
 				) || [];
+
 			const selectedWidget = (selectedDashboard.data.widgets || [])[
 				selectedWidgetIndex || 0
 			];
 
+			const getAllLayout = (): Layout[] => {
+				const allLayout = data.layout || [];
+
+				// empty layout is not present
+				if (emptyLayoutIndex === -1 || emptyLayoutIndex === undefined) {
+					return allLayout;
+				}
+
+				return [
+					...allLayout.slice(0, emptyLayoutIndex),
+					{ ...allLayout[emptyLayoutIndex], i: newWidgetId },
+					...allLayout.slice(emptyLayoutIndex + 1, allLayout.length),
+				];
+			};
+			const allLayout = getAllLayout();
 			const response = await updateDashboardApi({
+				data: {
+					...selectedDashboard.data,
+					// this is the data for the dashboard
+					title: selectedDashboard.data.title,
+					description: selectedDashboard.data.description,
+					tags: selectedDashboard.data.tags,
+					name: selectedDashboard.data.name,
+					layout: allLayout,
+					// as we are updated the widget only
+					widgets: [
+						...preWidget,
+						{
+							...selectedWidget,
+							description: updatedDescription,
+							id: isEmptyWidget ? newWidgetId : widgetId,
+							isStacked: updatedisStacked,
+							nullZeroValues: updatednullZeroValues,
+							opacity: updatedopacity,
+							title: updatedTitle,
+							timePreferance: updatedtimePreferance,
+							yAxisUnit: updatedYAxisUnit,
+							panelTypes: search.get('graphType') as Widgets['panelTypes'],
+							queryData: {
+								...selectedWidget.queryData,
+							},
+						},
+						...afterWidget,
+					],
+				},
 				uuid,
-				// this is the data for the dashboard
-				title: selectedDashboard.data.title,
-				description: selectedDashboard.data.description,
-				tags: selectedDashboard.data.tags,
-				name: selectedDashboard.data.name,
-				// as we are updated the widget only
-				widgets: [
-					...preWidget,
-					{
-						...selectedWidget,
-						description: updatedDescription,
-						id: widgetId,
-						isStacked: updatedisStacked,
-						nullZeroValues: updatednullZeroValues,
-						opacity: updatedopacity,
-						title: updatedTitle,
-						timePreferance: updatedtimePreferance,
-					},
-					...afterWidget,
-				],
 			});
 
 			if (response.statusCode === 200) {
@@ -83,7 +121,7 @@ export const SaveDashboard = ({
 					type: 'SAVE_SETTING_TO_PANEL_SUCCESS',
 					payload: response.payload,
 				});
-				history.push(updateUrl(ROUTES.DASHBOARD, ':dashboardId', dashboardId));
+				history.push(generatePath(ROUTES.DASHBOARD, { dashboardId }));
 			} else {
 				dispatch({
 					type: 'SAVE_SETTING_TO_PANEL_ERROR',
@@ -101,7 +139,6 @@ export const SaveDashboard = ({
 			});
 		}
 	};
-};
 
 export interface SaveDashboardProps {
 	uuid: Dashboard['uuid'];
@@ -113,4 +150,5 @@ export interface SaveDashboardProps {
 	nullZeroValues: Widgets['nullZeroValues'];
 	widgetId: Widgets['id'];
 	dashboardId: string;
+	yAxisUnit: Widgets['yAxisUnit'];
 }

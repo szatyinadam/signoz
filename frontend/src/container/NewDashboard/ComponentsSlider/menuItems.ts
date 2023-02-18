@@ -14,12 +14,16 @@ const Items: ItemsProps[] = [
 	},
 ];
 
-export type ITEMS = 'TIME_SERIES' | 'VALUE';
+export type ITEMS = 'TIME_SERIES' | 'VALUE' | 'EMPTY_WIDGET';
 
 interface ItemsProps {
 	name: ITEMS;
-	Icon: () => JSX.Element;
+	Icon: (props: IconProps) => JSX.Element;
 	display: string;
+}
+
+interface IconProps {
+	fillColor: React.CSSProperties['color'];
 }
 
 export default Items;

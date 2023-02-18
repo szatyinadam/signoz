@@ -1,54 +1,90 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Row, Table, TableColumnProps, Typography } from 'antd';
+import { Card, Dropdown, Menu, Row, TableColumnProps, Typography } from 'antd';
 import createDashboard from 'api/dashboard/create';
 import { AxiosError } from 'axios';
+import { ResizeTable } from 'components/ResizeTable';
+import TextToolTip from 'components/TextToolTip';
 import ROUTES from 'constants/routes';
-import updateUrl from 'lib/updateUrl';
-import React, { useCallback, useState } from 'react';
-import { useSelector } from 'react-redux';
-import { useHistory } from 'react-router-dom';
+import SearchFilter from 'container/ListOfDashboard/SearchFilter';
+import useComponentPermission from 'hooks/useComponentPermission';
+import history from 'lib/history';
+import React, {
+	Dispatch,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from 'react';
+import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
+import { generatePath } from 'react-router-dom';
 import { AppState } from 'store/reducers';
+import AppActions from 'types/actions';
+import { GET_ALL_DASHBOARD_SUCCESS } from 'types/actions/dashboard';
+import { Dashboard } from 'types/api/dashboard/getAll';
+import AppReducer from 'types/reducer/app';
 import DashboardReducer from 'types/reducer/dashboards';
-import { v4 } from 'uuid';
 
-import { NewDashboardButton, TableContainer } from './styles';
+import ImportJSON from './ImportJSON';
+import { ButtonContainer, NewDashboardButton, TableContainer } from './styles';
 import Createdby from './TableComponents/CreatedBy';
 import DateComponent from './TableComponents/Date';
 import DeleteButton from './TableComponents/DeleteButton';
 import Name from './TableComponents/Name';
 import Tags from './TableComponents/Tags';
 
-const ListOfAllDashboard = (): JSX.Element => {
-	const { dashboards } = useSelector<AppState, DashboardReducer>(
+function ListOfAllDashboard(): JSX.Element {
+	const { dashboards, loading } = useSelector<AppState, DashboardReducer>(
 		(state) => state.dashboards,
 	);
+	const dispatch = useDispatch<Dispatch<AppActions>>();
+	const { role } = useSelector<AppState, AppReducer>((state) => state.app);
 
+	const [action, createNewDashboard, newDashboard] = useComponentPermission(
+		['action', 'create_new_dashboards', 'new_dashboard'],
+		role,
+	);
+
+	const { t } = useTranslation('dashboard');
+	const [
+		isImportJSONModalVisible,
+		setIsImportJSONModalVisible,
+	] = useState<boolean>(false);
+	const [uploadedGrafana, setUploadedGrafana] = useState<boolean>(false);
+
+	const [filteredDashboards, setFilteredDashboards] = useState<Dashboard[]>();
+
+	useEffect(() => {
+		setFilteredDashboards(dashboards);
+	}, [dashboards]);
 	const [newDashboardState, setNewDashboardState] = useState({
 		loading: false,
 		error: false,
 		errorMessage: '',
 	});
 
-	const { push } = useHistory();
-
 	const columns: TableColumnProps<Data>[] = [
 		{
 			title: 'Name',
 			dataIndex: 'name',
+			width: 100,
 			render: Name,
 		},
 		{
 			title: 'Description',
+			width: 100,
 			dataIndex: 'description',
 		},
 		{
 			title: 'Tags (can be multiple)',
 			dataIndex: 'tags',
+			width: 80,
 			render: Tags,
 		},
 		{
 			title: 'Created At',
 			dataIndex: 'createdBy',
+			width: 80,
 			sorter: (a: Data, b: Data): number => {
 				const prev = new Date(a.createdBy).getTime();
 				const next = new Date(b.createdBy).getTime();
@@ -59,6 +95,7 @@ const ListOfAllDashboard = (): JSX.Element => {
 		},
 		{
 			title: 'Last Updated Time',
+			width: 90,
 			dataIndex: 'lastUpdatedTime',
 			sorter: (a: Data, b: Data): number => {
 				const prev = new Date(a.lastUpdatedTime).getTime();
@@ -68,15 +105,19 @@ const ListOfAllDashboard = (): JSX.Element => {
 			},
 			render: DateComponent,
 		},
-		{
+	];
+
+	if (action) {
+		columns.push({
 			title: 'Action',
 			dataIndex: '',
 			key: 'x',
+			width: 40,
 			render: DeleteButton,
-		},
-	];
+		});
+	}
 
-	const data: Data[] = dashboards.map((e) => ({
+	const data: Data[] = (filteredDashboards || dashboards).map((e) => ({
 		createdBy: e.created_at,
 		description: e.data.description || '',
 		id: e.uuid,
@@ -88,22 +129,27 @@ const ListOfAllDashboard = (): JSX.Element => {
 
 	const onNewDashboardHandler = useCallback(async () => {
 		try {
-			const newDashboardId = v4();
 			setNewDashboardState({
 				...newDashboardState,
 				loading: true,
 			});
 			const response = await createDashboard({
-				uuid: newDashboardId,
-				title: 'Sample Title',
+				title: t('new_dashboard_title', {
+					ns: 'dashboard',
+				}),
+				uploadedGrafana: false,
 			});
 
 			if (response.statusCode === 200) {
-				setNewDashboardState({
-					...newDashboardState,
-					loading: false,
+				dispatch({
+					type: GET_ALL_DASHBOARD_SUCCESS,
+					payload: [],
 				});
-				push(updateUrl(ROUTES.DASHBOARD, ':dashboardId', newDashboardId));
+				history.push(
+					generatePath(ROUTES.DASHBOARD, {
+						dashboardId: response.payload.uuid,
+					}),
+				);
 			} else {
 				setNewDashboardState({
 					...newDashboardState,
@@ -119,9 +165,9 @@ const ListOfAllDashboard = (): JSX.Element => {
 				errorMessage: (error as AxiosError).toString() || 'Something went Wrong',
 			});
 		}
-	}, [newDashboardState, push]);
+	}, [newDashboardState, t, dispatch]);
 
-	const getText = (): string => {
+	const getText = useCallback(() => {
 		if (!newDashboardState.error && !newDashboardState.loading) {
 			return 'New Dashboard';
 		}
@@ -131,24 +177,61 @@ const ListOfAllDashboard = (): JSX.Element => {
 		}
 
 		return newDashboardState.errorMessage;
+	}, [
+		newDashboardState.error,
+		newDashboardState.errorMessage,
+		newDashboardState.loading,
+	]);
+
+	const onModalHandler = (uploadedGrafana: boolean): void => {
+		setIsImportJSONModalVisible((state) => !state);
+		setUploadedGrafana(uploadedGrafana);
 	};
 
-	return (
-		<TableContainer>
-			<Table
-				pagination={{
-					pageSize: 9,
-					defaultPageSize: 9,
-				}}
-				showHeader
-				bordered
-				sticky
-				title={(): JSX.Element => {
-					return (
-						<Row justify="space-between">
-							<Typography>Dashboard List</Typography>
+	const menu = useMemo(
+		() => (
+			<Menu>
+				{createNewDashboard && (
+					<Menu.Item
+						onClick={onNewDashboardHandler}
+						disabled={loading}
+						key={t('create_dashboard').toString()}
+					>
+						{t('create_dashboard')}
+					</Menu.Item>
+				)}
+				<Menu.Item
+					onClick={(): void => onModalHandler(false)}
+					key={t('import_json').toString()}
+				>
+					{t('import_json')}
+				</Menu.Item>
+				<Menu.Item
+					onClick={(): void => onModalHandler(true)}
+					key={t('import_grafana_json').toString()}
+				>
+					{t('import_grafana_json')}
+				</Menu.Item>
+			</Menu>
+		),
+		[createNewDashboard, loading, onNewDashboardHandler, t],
+	);
+
+	const GetHeader = useMemo(
+		() => (
+			<Row justify="space-between">
+				<Typography>Dashboard List</Typography>
+
+				<ButtonContainer>
+					<TextToolTip
+						{...{
+							text: `More details on how to create dashboards`,
+							url: 'https://signoz.io/docs/userguide/dashboards',
+						}}
+					/>
+					{newDashboard && (
+						<Dropdown trigger={['click']} overlay={menu}>
 							<NewDashboardButton
-								onClick={onNewDashboardHandler}
 								icon={<PlusOutlined />}
 								type="primary"
 								loading={newDashboardState.loading}
@@ -156,16 +239,54 @@ const ListOfAllDashboard = (): JSX.Element => {
 							>
 								{getText()}
 							</NewDashboardButton>
-						</Row>
-					);
-				}}
-				columns={columns}
-				dataSource={data}
-				showSorterTooltip
-			/>
-		</TableContainer>
+						</Dropdown>
+					)}
+				</ButtonContainer>
+			</Row>
+		),
+		[
+			getText,
+			menu,
+			newDashboard,
+			newDashboardState.error,
+			newDashboardState.loading,
+		],
 	);
-};
+
+	return (
+		<Card>
+			{GetHeader}
+
+			{!loading && (
+				<SearchFilter
+					searchData={dashboards}
+					filterDashboards={setFilteredDashboards}
+				/>
+			)}
+
+			<TableContainer>
+				<ImportJSON
+					isImportJSONModalVisible={isImportJSONModalVisible}
+					uploadedGrafana={uploadedGrafana}
+					onModalHandler={(): void => onModalHandler(false)}
+				/>
+				<ResizeTable
+					columns={columns}
+					pagination={{
+						pageSize: 9,
+						defaultPageSize: 9,
+					}}
+					showHeader
+					bordered
+					sticky
+					loading={loading}
+					dataSource={data}
+					showSorterTooltip
+				/>
+			</TableContainer>
+		</Card>
+	);
+}
 
 export interface Data {
 	key: React.Key;

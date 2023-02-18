@@ -6,23 +6,29 @@ import QuerySection from './QuerySection';
 import { QueryContainer } from './styles';
 import WidgetGraph from './WidgetGraph';
 
-const LeftContainer = ({
+function LeftContainer({
 	selectedGraph,
 	selectedTime,
-}: LeftContainerProps): JSX.Element => {
+	yAxisUnit,
+	handleUnstagedChanges,
+}: LeftContainerProps): JSX.Element {
 	return (
 		<>
-			<WidgetGraph selectedGraph={selectedGraph} />
-
+			<WidgetGraph selectedGraph={selectedGraph} yAxisUnit={yAxisUnit} />
 			<QueryContainer>
-				<QuerySection selectedTime={selectedTime} />
+				<QuerySection
+					selectedTime={selectedTime}
+					handleUnstagedChanges={handleUnstagedChanges}
+					selectedGraph={selectedGraph}
+				/>
 			</QueryContainer>
 		</>
 	);
-};
+}
 
 interface LeftContainerProps extends NewWidgetProps {
 	selectedTime: timePreferance;
+	handleUnstagedChanges: (arg0: boolean) => void;
 }
 
 export default memo(LeftContainer);

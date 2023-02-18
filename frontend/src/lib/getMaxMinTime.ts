@@ -1,4 +1,4 @@
-import { GlobalTime } from 'store/actions';
+import { GlobalTime } from 'types/actions/globalTime';
 import { Widgets } from 'types/api/dashboard/getAll';
 
 const GetMaxMinTime = ({
@@ -8,18 +8,18 @@ const GetMaxMinTime = ({
 }: GetMaxMinProps): GlobalTime => {
 	if (graphType === 'VALUE') {
 		return {
-			maxTime: maxTime,
+			maxTime,
 			minTime: maxTime,
 		};
 	}
 	return {
-		maxTime: maxTime,
-		minTime: minTime,
+		maxTime,
+		minTime,
 	};
 };
 
 interface GetMaxMinProps {
-	graphType: Widgets['panelTypes'];
+	graphType: Widgets['panelTypes'] | null;
 	maxTime: GlobalTime['maxTime'];
 	minTime: GlobalTime['minTime'];
 }

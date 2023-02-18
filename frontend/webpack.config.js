@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-var-requires */
 // shared config (dev and prod)
 const { resolve } = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
@@ -5,34 +6,45 @@ const portFinderSync = require('portfinder-sync');
 const dotenv = require('dotenv');
 const webpack = require('webpack');
 const TsconfigPathsPlugin = require('tsconfig-paths-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 dotenv.config();
 
 console.log(resolve(__dirname, './src/'));
 
-module.exports = {
+const plugins = [
+	new HtmlWebpackPlugin({ template: 'src/index.html.ejs' }),
+	new webpack.ProvidePlugin({
+		process: 'process/browser',
+	}),
+	new webpack.DefinePlugin({
+		'process.env': JSON.stringify(process.env),
+	}),
+];
+
+if (process.env.BUNDLE_ANALYSER === 'true') {
+	plugins.push(new BundleAnalyzerPlugin({ analyzerMode: 'server' }));
+}
+
+const config = {
 	mode: 'development',
 	devtool: 'source-map',
 	entry: resolve(__dirname, './src/index.tsx'),
 	devServer: {
 		historyApiFallback: true,
-		publicPath: '/',
-		transportMode: 'ws',
 		open: true,
-		openPage: 'application',
-		contentBase: [resolve(__dirname, './public')],
 		hot: true,
-		liveReload: false,
-		inline: true,
-		// This is being used because if the port 3000 is being used
-		// then it will try to find another open port availble.
-		port: portFinderSync.getPort(3000),
+		liveReload: true,
+		port: portFinderSync.getPort(3301),
+		static: {
+			directory: resolve(__dirname, 'public'),
+			publicPath: '/',
+			watch: true,
+		},
+		allowedHosts: 'all',
 	},
 	target: 'web',
 	output: {
-		filename: ({ chunk: { name, hash } }) => {
-			return `js/${name}-${hash}.js`;
-		},
 		path: resolve(__dirname, './build'),
 		publicPath: '/',
 	},
@@ -49,11 +61,15 @@ module.exports = {
 			},
 			{
 				test: /\.css$/,
-				use: ['style-loader', 'css-loader'],
-			},
-			{
-				test: /\.(scss|sass)$/,
-				use: ['style-loader', 'css-loader', 'sass-loader'],
+				use: [
+					'style-loader',
+					{
+						loader: 'css-loader',
+						options: {
+							modules: true,
+						},
+					},
+				],
 			},
 			{
 				test: /\.(jpe?g|png|gif|svg)$/i,
@@ -62,18 +78,38 @@ module.exports = {
 					'image-webpack-loader?bypassOnDebug&optipng.optimizationLevel=7&gifsicle.interlaced=false',
 				],
 			},
+			{
+				test: /\.(ttf|eot|woff|woff2)$/,
+				use: ['file-loader'],
+			},
+			{
+				test: /\.less$/i,
+				use: [
+					{
+						loader: 'style-loader',
+					},
+					{
+						loader: 'css-loader',
+						options: {
+							modules: true,
+						},
+					},
+					{
+						loader: 'less-loader',
+						options: {
+							lessOptions: {
+								javascriptEnabled: true,
+							},
+						},
+					},
+				],
+			},
 		],
 	},
-	plugins: [
-		new HtmlWebpackPlugin({ template: 'src/index.html.ejs' }),
-		new webpack.ProvidePlugin({
-			process: 'process/browser',
-		}),
-		new webpack.DefinePlugin({
-			'process.env': JSON.stringify(process.env),
-		}),
-	],
+	plugins,
 	performance: {
 		hints: false,
 	},
 };
+
+module.exports = config;

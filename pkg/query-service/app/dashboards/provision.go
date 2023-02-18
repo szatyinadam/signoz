@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 
+	"go.signoz.io/signoz/pkg/query-service/constants"
 	"go.uber.org/zap"
 )
 
@@ -18,7 +19,6 @@ func readCurrentDir(dir string) error {
 
 	list, _ := file.Readdirnames(0) // 0 to read all files and folders
 	for _, filename := range list {
-		// fmt.Println(filename)
 		zap.S().Info("Provisioning dashboard: ", filename)
 		plan, err := ioutil.ReadFile(dir + "/" + filename)
 		if err != nil {
@@ -43,7 +43,7 @@ func readCurrentDir(dir string) error {
 			continue
 		}
 
-		_, apiErr = CreateDashboard(&data)
+		_, apiErr = CreateDashboard(data)
 		if apiErr != nil {
 			zap.S().Errorf("Creating Dashboards: Error in file: %s\t%s", filename, apiErr.Err)
 			continue
@@ -54,5 +54,6 @@ func readCurrentDir(dir string) error {
 }
 
 func LoadDashboardFiles() error {
-	return readCurrentDir("./config/dashboards")
+	dashboardsPath := constants.GetOrDefaultEnv("DASHBOARDS_PATH", "./config/dashboards")
+	return readCurrentDir(dashboardsPath)
 }

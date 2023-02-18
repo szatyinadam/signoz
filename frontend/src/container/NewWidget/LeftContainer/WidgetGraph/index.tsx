@@ -8,10 +8,14 @@ import { AppState } from 'store/reducers';
 import DashboardReducer from 'types/reducer/dashboards';
 
 import { NewWidgetProps } from '../../index';
+import PlotTag from './PlotTag';
 import { AlertIconContainer, Container, NotFoundContainer } from './styles';
 import WidgetGraphComponent from './WidgetGraph';
 
-const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
+function WidgetGraph({
+	selectedGraph,
+	yAxisUnit,
+}: WidgetGraphProps): JSX.Element {
 	const { dashboards, isQueryFired } = useSelector<AppState, DashboardReducer>(
 		(state) => state.dashboards,
 	);
@@ -28,13 +32,13 @@ const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
 	const selectedWidget = widgets.find((e) => e.id === widgetId);
 
 	if (selectedWidget === undefined) {
-		return <Card isQueryType={false}>Invalid widget</Card>;
+		return <Card>Invalid widget</Card>;
 	}
 
 	const { queryData } = selectedWidget;
-
 	return (
 		<Container>
+			<PlotTag queryType={selectedWidget.query.queryType} />
 			{queryData.error && (
 				<AlertIconContainer color="red" title={queryData.errorMessage}>
 					<InfoCircleOutlined />
@@ -47,10 +51,12 @@ const WidgetGraph = ({ selectedGraph }: WidgetGraphProps): JSX.Element => {
 				</NotFoundContainer>
 			)}
 
-			{isQueryFired && <WidgetGraphComponent selectedGraph={selectedGraph} />}
+			{isQueryFired && (
+				<WidgetGraphComponent selectedGraph={selectedGraph} yAxisUnit={yAxisUnit} />
+			)}
 		</Container>
 	);
-};
+}
 
 type WidgetGraphProps = NewWidgetProps;
 
